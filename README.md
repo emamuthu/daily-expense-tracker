@@ -24,13 +24,13 @@ On any computer, tablet, or phone browser, go to:
 👉 **[https://emamuthu.github.io/daily-expense-tracker/](https://emamuthu.github.io/daily-expense-tracker/)**
 
 ### 2. Unlock on a New Device (First Time Only)
-When you open the link on a new computer or phone for the first time, you will see the unlock screen:
-1. **GitHub Username:** `emamuthu` *(pre-filled)*
-2. **GitHub Personal Access Token:** Paste your token (`github_pat_...` or `ghp_...`)
-3. Click **Connect & Load Expenses**.
+When you open the link on a new computer or phone for the first time, you will see the password screen:
+1. Enter your **App Password** and click **Unlock Expenses**.
+   *(Your GitHub token is encrypted inside `auth_vault.json` using 200,000-iteration PBKDF2-HMAC-SHA256 + Encrypt-then-MAC, so you never have to copy or remember a long token on other devices.)*
+2. To change your password anytime, go to **Bills & Backup → Change App Password**, type your new password, and click **Update Password**.
 
-- **Automatic Remember Me:** Your token is saved privately inside that browser's local storage so you stay logged in when you return.
-- **Shared Computers:** If you ever use a public or borrowed computer, click the **Lock** button in the top-right corner when finished to clear the token from that browser.
+- **Automatic Remember Me:** Once unlocked, your session is remembered in that browser's local storage so you stay logged in when you return.
+- **Shared Computers:** If you ever use a public or borrowed computer, click the **Lock** button in the top-right corner when finished.
 
 ### 3. Install on Your Phone (iPhone / Android)
 You can add the tracker to your phone's home screen so it opens full-screen like a native app:

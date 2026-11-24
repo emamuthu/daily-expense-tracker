@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Daily Expense Tracker</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- GitHub Private Data Auth Gate -->
+  <div id="auth-overlay" class="auth-overlay hidden">
+    <div class="auth-card" style="max-width:430px;">
+      <img src="./icon.svg" alt="" class="auth-logo" />
+      <h1>Daily Expense Tracker</h1>
+      <p class="muted">Connect to your private GitHub database (<code>daily-expense-data</code>) to view and log expenses from this device.</p>
+      <form id="login-form" style="text-align:left;">
+        <div class="field" style="margin-top:12px;">
+          <label for="gh-owner">GitHub Username</label>
+          <input id="gh-owner" type="text" value="emamuthu" required style="margin:4px 0 8px;" />
+        </div>
+        <div class="field">
+          <label for="login-password">GitHub Personal Access Token</label>
+          <input id="login-password" type="password" placeholder="ghp_... or github_pat_..." autocomplete="current-password" required style="margin:4px 0 14px;" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Connect &amp; Load Expenses</button>
+      </form>
+      <p id="login-error" class="error-text hidden"></p>
+      <p class="muted-sm" style="margin-top:12px;">Your token is stored only in this browser and connects directly to <code>api.github.com</code>.</p>
+    </div>
+  </div>
+
+  <!-- App Shell -->
+  <div id="app-shell" class="app-shell hidden">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <img src="./icon.svg" alt="" class="brand-icon" />
+          <div>
+            <div class="brand-title">Daily Expenses</div>
+            <div class="brand-sub" id="header-month-pill">Loading...</div>
+          </div>
+        </div>
+        <nav class="desktop-nav" aria-label="Primary navigation">
+          <button class="nav-btn active" data-view="add">Quick Add</button>
+          <button class="nav-btn" data-view="month">Monthly Log</button>
+          <button class="nav-btn" data-view="trends">Trends &amp; YoY</button>
+          <button class="nav-btn" data-view="manage">Bills &amp; Backup</button>
+        </nav>
+        <div class="topbar-actions">
+          <button id="sync-now-btn" class="badge badge-subtle" style="border:none;cursor:pointer;" title="Click to refresh from GitHub">GitHub Synced</button>
+          <button id="logout-btn" class="btn btn-ghost btn-sm">Lock</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <!-- VIEW 1: QUICK ADD -->
+      <section id="view-add" class="view active">
+        <div class="grid-two-add">
+          <div class="card card-accent">
+            <div class="card-header">
+              <h2>Log Expense</h2>
+              <span id="today-label" class="muted-sm"></span>
+            </div>
+
+            <form id="quick-add-form" autocomplete="off">
+              <div class="amount-box">
+                <span class="currency-prefix">$</span>
+                <input id="add-amount" type="number" step="0.01" inputmode="decimal" placeholder="0.00" required />
+              </div>
+
+              <div class="quick-chips-wrap">
+                <div class="section-micro">Quick tap frequent items</div>
+                <div id="quick-chips" class="chips"></div>
+              </div>
+
+              <div class="form-row">
+                <div class="field flex-2">
+                  <label for="add-item">Item / Merchant</label>
+                  <input id="add-item" type="text" list="item-datalist" placeholder="e.g. Food, Costco, Gas, Amazon..." required />
+                  <datalist id="item-datalist"></datalist>
+                </div>
+                <div class="field flex-1">
+                  <label for="add-category">Category</label>
+                  <select id="add-category"></select>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="field flex-1">
+                  <label for="add-date">Date</label>
+                  <input id="add-date" type="date" required />
+                </div>
+                <div class="field flex-2">
+                  <label for="add-notes">Notes (optional)</label>
+                  <input id="add-notes" type="text" placeholder="Optional details..." />
+                </div>
+              </div>
+
+              <div class="form-footer-row">
+                <label class="checkbox-pill">
+                  <input id="add-recurring" type="checkbox" />
+                  <span>Fixed Monthly Bill</span>
+                </label>
+                <button type="submit" class="btn btn-primary btn-lg">Add Expense</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>This Month Snapshot</h2>
+              <button class="btn btn-ghost btn-sm" id="jump-this-month">Open Full Month &rarr;</button>
+            </div>
+            <div class="mini-stats">
+              <div class="mini-stat">
+                <span class="stat-label">Month Total</span>
+                <span class="stat-val" id="snap-total">$0</span>
+              </div>
+              <div class="mini-stat">
+                <span class="stat-label">Daily Spending</span>
+                <span class="stat-val accent-emerald" id="snap-daily">$0</span>
+              </div>
+              <div class="mini-stat">
+                <span class="stat-label">Fixed Bills</span>
+                <span class="stat-val accent-blue" id="snap-fixed">$0</span>
+              </div>
+            </div>
+
+            <div class="card-subheader">
+              <h3>Recent Entries</h3>
+              <span class="muted-sm">Tap any entry to edit</span>
+            </div>
+            <div id="recent-list" class="tx-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: MONTHLY LOG -->
+      <section id="view-month" class="view">
+        <div class="month-bar card">
+          <div class="month-nav">
+            <button id="prev-month-btn" class="btn btn-icon" aria-label="Previous month">&lsaquo;</button>
+            <div class="month-pickers">
+              <select id="select-month"></select>
+              <select id="select-year"></select>
+            </div>
+            <button id="next-month-btn" class="btn btn-icon" aria-label="Next month">&rsaquo;</button>
+          </div>
+          <div class="month-actions">
+            <button id="open-apply-bills-btn" class="btn btn-secondary btn-sm">+ Apply Monthly Bills</button>
+            <button id="month-add-btn" class="btn btn-primary btn-sm">+ Add Entry</button>
+          </div>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-label">Month Total</div>
+            <div class="stat-big" id="m-total">$0</div>
+            <div class="stat-sub" id="m-count">0 entries</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Fixed Monthly Bills</div>
+            <div class="stat-big accent-blue" id="m-fixed">$0</div>
+            <div class="stat-sub" id="m-fixed-pct">0% of month</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Daily Spending</div>
+            <div class="stat-big accent-emerald" id="m-daily">$0</div>
+            <div class="stat-sub" id="m-daily-avg">$0 / day</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">vs Same Month Last Year</div>
+            <div class="stat-big" id="m-yoy-diff">—</div>
+            <div class="stat-sub" id="m-yoy-prev">No prior year data</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="filter-bar">
+            <input id="m-filter-q" type="search" placeholder="Filter this month (e.g. food, costco)..." />
+            <select id="m-filter-cat">
+              <option value="ALL">All Categories</option>
+            </select>
+            <select id="m-filter-type">
+              <option value="">All Types</option>
+              <option value="0">Daily Only</option>
+              <option value="1">Fixed Bills Only</option>
+            </select>
+          </div>
+          <div id="month-entries" class="day-groups"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: TRENDS & YOY -->
+      <section id="view-trends" class="view">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2>Year-over-Year Monthly Comparison</h2>
+              <p class="muted-sm">Click any cell to open that month. Automatically updates as you log expenses.</p>
+            </div>
+            <div class="yoy-kpi" id="yoy-alltime-kpi"></div>
+          </div>
+          <div class="table-scroll">
+            <table class="yoy-table" id="yoy-table"></table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Annual Spending Trend</h2>
+          </div>
+          <div id="annual-chart" class="bar-chart-wrap"></div>
+        </div>
+
+        <div class="grid-two">
+          <div class="card">
+            <div class="card-header">
+              <h2>Category Breakdown</h2>
+              <select id="trends-year-select"></select>
+            </div>
+            <div id="category-bars" class="cat-bars"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Top Merchants / Items</h2>
+              <span class="muted-sm" id="top-items-subtitle"></span>
+            </div>
+            <div id="top-items-list" class="top-list"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2>Search Across All Years (2016–Present)</h2>
+              <p class="muted-sm">Check how much you spent at Costco, Amazon, Gas, etc. year by year.</p>
+            </div>
+          </div>
+          <form id="global-search-form" class="search-row">
+            <input id="global-search-input" type="search" placeholder="Search any item or category (e.g. costco, amazon, gas, target)..." />
+            <button type="submit" class="btn btn-primary">Search</button>
+          </form>
+          <div id="global-search-results"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: RECURRING BILLS & BACKUP -->
+      <section id="view-manage" class="view">
+        <div class="grid-two">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2>Recurring Monthly Bills</h2>
+                <p class="muted-sm">Pre-loaded from your 2026 fixed bills. Apply them to any new month in 1 click.</p>
+              </div>
+              <button id="add-template-btn" class="btn btn-primary btn-sm">+ New Bill</button>
+            </div>
+            <div id="recurring-list" class="tx-list"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2>Cloud Sync &amp; Backups</h2>
+                <p class="muted-sm">Synced live with your private GitHub repo (<code id="repo-indicator">emamuthu/daily-expense-data</code>).</p>
+              </div>
+            </div>
+
+            <div class="backup-block">
+              <h3>Download Backup</h3>
+              <p class="muted-sm">Download a local copy of all your expense records anytime.</p>
+              <div class="inline-controls">
+                <button id="download-json-btn" class="btn btn-secondary">Download JSON Backup</button>
+                <button id="download-csv-btn" class="btn btn-ghost">Download All CSV</button>
+              </div>
+            </div>
+
+            <div class="backup-block">
+              <h3>Restore JSON Backup</h3>
+              <p class="muted-sm">Upload a JSON backup file to replace and sync your cloud database.</p>
+              <div class="inline-controls">
+                <input id="import-json-file" type="file" accept=".json,application/json" />
+                <button id="import-json-btn" class="btn btn-primary">Upload &amp; Sync</button>
+              </div>
+              <div id="import-status" class="muted-sm" style="margin-top:8px;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav class="bottom-nav" aria-label="Mobile navigation">
+      <button class="bnav-btn active" data-view="add">
+        <span class="bnav-icon">+</span>
+        <span>Add</span>
+      </button>
+      <button class="bnav-btn" data-view="month">
+        <span class="bnav-icon">&#128197;</span>
+        <span>Month</span>
+      </button>
+      <button class="bnav-btn" data-view="trends">
+        <span class="bnav-icon">&#128202;</span>
+        <span>Trends</span>
+      </button>
+      <button class="bnav-btn" data-view="manage">
+        <span class="bnav-icon">&#9881;</span>
+        <span>Manage</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Edit Expense Modal -->
+  <div id="edit-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="card-header">
+        <h2>Edit Expense</h2>
+        <button class="btn btn-ghost btn-sm" id="close-edit-modal">&times;</button>
+      </div>
+      <form id="edit-expense-form">
+        <input type="hidden" id="edit-id" />
+        <div class="form-row">
+          <div class="field flex-1">
+            <label for="edit-amount">Amount ($)</label>
+            <input id="edit-amount" type="number" step="0.01" inputmode="decimal" required />
+          </div>
+          <div class="field flex-1">
+            <label for="edit-date">Date</label>
+            <input id="edit-date" type="date" required />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field flex-1">
+            <label for="edit-item">Item / Merchant</label>
+            <input id="edit-item" type="text" list="item-datalist" required />
+          </div>
+          <div class="field flex-1">
+            <label for="edit-category">Category</label>
+            <select id="edit-category"></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="edit-notes">Notes</label>
+          <input id="edit-notes" type="text" />
+        </div>
+        <label class="checkbox-pill" style="margin: 10px 0 16px;">
+          <input id="edit-recurring" type="checkbox" />
+          <span>Fixed Monthly Bill</span>
+        </label>
+        <div class="modal-actions">
+          <button type="button" id="delete-expense-btn" class="btn btn-danger">Delete</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn btn-ghost" id="cancel-edit-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Apply Monthly Bills Modal -->
+  <div id="apply-bills-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card modal-wide">
+      <div class="card-header">
+        <div>
+          <h2 id="apply-bills-title">Apply Monthly Bills</h2>
+          <p class="muted-sm">Uncheck any bill already entered or adjust amounts before inserting.</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="close-apply-modal">&times;</button>
+      </div>
+      <div id="apply-bills-list" class="apply-list"></div>
+      <div class="modal-actions">
+        <div class="muted-sm" id="apply-bills-total"></div>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost" id="cancel-apply-modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirm-apply-bills">Add Selected Bills</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit Recurring Template Modal -->
+  <div id="template-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="card-header">
+        <h2 id="tpl-modal-title">Recurring Bill</h2>
+        <button class="btn btn-ghost btn-sm" id="close-tpl-modal">&times;</button>
+      </div>
+      <form id="template-form">
+        <input type="hidden" id="tpl-id" />
+        <div class="form-row">
+          <div class="field flex-2">
+            <label for="tpl-item">Bill Name</label>
+            <input id="tpl-item" type="text" placeholder="e.g. Mortgage, Xfinity, Cell" required />
+          </div>
+          <div class="field flex-1">
+            <label for="tpl-amount">Default ($)</label>
+            <input id="tpl-amount" type="number" step="0.01" inputmode="decimal" required />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field flex-2">
+            <label for="tpl-category">Category</label>
+            <select id="tpl-category"></select>
+          </div>
+          <div class="field flex-1">
+            <label for="tpl-day">Day of Month</label>
+            <input id="tpl-day" type="number" min="1" max="28" value="1" required />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="delete-tpl-btn" class="btn btn-danger hidden">Delete</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn btn-ghost" id="cancel-tpl-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Bill</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

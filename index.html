@@ -13,25 +13,30 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <!-- GitHub Private Data Auth Gate -->
+  <!-- Password Auth Gate -->
   <div id="auth-overlay" class="auth-overlay hidden">
-    <div class="auth-card" style="max-width:430px;">
+    <div class="auth-card" style="max-width:410px;">
       <img src="./icon.svg" alt="" class="auth-logo" />
       <h1>Daily Expense Tracker</h1>
-      <p class="muted">Connect to your private GitHub database (<code>daily-expense-data</code>) to view and log expenses from this device.</p>
-      <form id="login-form" style="text-align:left;">
-        <div class="field" style="margin-top:12px;">
-          <label for="gh-owner">GitHub Username</label>
-          <input id="gh-owner" type="text" value="emamuthu" required style="margin:4px 0 8px;" />
+      <p class="muted" id="auth-subtitle">Enter your password to unlock your expenses on this device.</p>
+      <form id="login-form">
+        <input id="login-password" type="password" placeholder="Enter your App Password" autocomplete="current-password" required />
+        <div id="advanced-token-fields" class="hidden" style="text-align:left;margin-bottom:12px;">
+          <div class="field" style="margin-bottom:8px;">
+            <label for="gh-owner">GitHub Username</label>
+            <input id="gh-owner" type="text" value="emamuthu" style="margin:4px 0 0;" />
+          </div>
+          <div class="field">
+            <label for="gh-raw-token">Or Paste GitHub Token Directly</label>
+            <input id="gh-raw-token" type="password" placeholder="github_pat_... or ghp_..." style="margin:4px 0 0;" />
+          </div>
         </div>
-        <div class="field">
-          <label for="login-password">GitHub Personal Access Token</label>
-          <input id="login-password" type="password" placeholder="ghp_... or github_pat_..." autocomplete="current-password" required style="margin:4px 0 14px;" />
-        </div>
-        <button type="submit" class="btn btn-primary btn-block">Connect &amp; Load Expenses</button>
+        <button type="submit" id="login-submit-btn" class="btn btn-primary btn-block">Unlock Expenses</button>
       </form>
       <p id="login-error" class="error-text hidden"></p>
-      <p class="muted-sm" style="margin-top:12px;">Your token is stored only in this browser and connects directly to <code>api.github.com</code>.</p>
+      <p style="margin-top:14px;margin-bottom:0;">
+        <button type="button" id="toggle-advanced-auth" class="btn btn-ghost btn-sm" style="font-size:0.76rem;">Advanced: Sign in with GitHub Token instead</button>
+      </p>
     </div>
   </div>
 
@@ -269,9 +274,19 @@
           <div class="card">
             <div class="card-header">
               <div>
-                <h2>Cloud Sync &amp; Backups</h2>
+                <h2>Password, Cloud Sync &amp; Backups</h2>
                 <p class="muted-sm">Synced live with your private GitHub repo (<code id="repo-indicator">emamuthu/daily-expense-data</code>).</p>
               </div>
+            </div>
+
+            <div class="backup-block" style="padding-top:4px;">
+              <h3>Change App Password</h3>
+              <p class="muted-sm">Set the password you use to unlock this app from any computer or phone.</p>
+              <form id="change-password-form" class="inline-controls">
+                <input id="new-app-password" type="password" placeholder="New App Password" required style="flex:1;min-width:180px;" />
+                <button type="submit" class="btn btn-primary">Update Password</button>
+              </form>
+              <div id="change-password-status" class="muted-sm" style="margin-top:6px;"></div>
             </div>
 
             <div class="backup-block">

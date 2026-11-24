@@ -56,9 +56,152 @@ function guessCategory(item) {
 }
 
 const DATA_REPO = "daily-expense-data";
+const APP_REPO = "daily-expense-tracker";
 const DATA_PATH = "expenses_db.json";
 const STORAGE_TOKEN_KEY = "det_gh_token";
 const STORAGE_OWNER_KEY = "det_gh_owner";
+const PBKDF2_ITERATIONS = 200000;
+
+/* -------------------- Web Crypto Password Vault (PBKDF2 + HMAC-SHA256) -------------------- */
+
+function b64ToBytes(b64) {
+  const bin = atob(b64.replace(/\s+/g, ""));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function bytesToB64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function concatBytes(...arrays) {
+  const total = arrays.reduce((acc, a) => acc + a.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const a of arrays) {
+    out.set(a, offset);
+    offset += a.length;
+  }
+  return out;
+}
+
+async function deriveVaultKeys(password, salt, iterations = PBKDF2_ITERATIONS) {
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    baseKey,
+    512
+  );
+  const dk = new Uint8Array(bits);
+  const encKey = await crypto.subtle.importKey(
+    "raw",
+    dk.slice(0, 32),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const macKey = await crypto.subtle.importKey(
+    "raw",
+    dk.slice(32, 64),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  return { encKey, macKey };
+}
+
+async function decryptTokenVault(vault, password) {
+  const salt = b64ToBytes(vault.salt);
+  const iv = b64ToBytes(vault.iv);
+  const ct = b64ToBytes(vault.ct);
+  const expectedTag = b64ToBytes(vault.tag);
+  const { encKey, macKey } = await deriveVaultKeys(password, salt, Number(vault.iter || PBKDF2_ITERATIONS));
+
+  const tagBuf = await crypto.subtle.sign("HMAC", macKey, concatBytes(salt, iv, ct));
+  const actualTag = new Uint8Array(tagBuf);
+  let diff = actualTag.length ^ expectedTag.length;
+  for (let i = 0; i < Math.min(actualTag.length, expectedTag.length); i++) {
+    diff |= actualTag[i] ^ expectedTag[i];
+  }
+  if (diff !== 0) {
+    throw new Error("Incorrect password. Please try again.");
+  }
+
+  const ks = new Uint8Array(Math.ceil(ct.length / 32) * 32);
+  for (let blk = 0; blk * 32 < ct.length; blk++) {
+    const ctr = new Uint8Array(4);
+    new DataView(ctr.buffer).setUint32(0, blk, false);
+    const blockBytes = new Uint8Array(await crypto.subtle.sign("HMAC", encKey, concatBytes(iv, ctr)));
+    ks.set(blockBytes, blk * 32);
+  }
+
+  const pt = new Uint8Array(ct.length);
+  for (let i = 0; i < ct.length; i++) pt[i] = ct[i] ^ ks[i];
+  return new TextDecoder().decode(pt);
+}
+
+async function encryptTokenVault(token, password, owner = "emamuthu") {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(16));
+  const { encKey, macKey } = await deriveVaultKeys(password, salt, PBKDF2_ITERATIONS);
+  const pt = new TextEncoder().encode(token.trim());
+
+  const ks = new Uint8Array(Math.ceil(pt.length / 32) * 32);
+  for (let blk = 0; blk * 32 < pt.length; blk++) {
+    const ctr = new Uint8Array(4);
+    new DataView(ctr.buffer).setUint32(0, blk, false);
+    const blockBytes = new Uint8Array(await crypto.subtle.sign("HMAC", encKey, concatBytes(iv, ctr)));
+    ks.set(blockBytes, blk * 32);
+  }
+
+  const ct = new Uint8Array(pt.length);
+  for (let i = 0; i < pt.length; i++) ct[i] = pt[i] ^ ks[i];
+  const tag = new Uint8Array(await crypto.subtle.sign("HMAC", macKey, concatBytes(salt, iv, ct)));
+
+  return {
+    v: 1,
+    owner,
+    iter: PBKDF2_ITERATIONS,
+    salt: bytesToB64(salt),
+    iv: bytesToB64(iv),
+    ct: bytesToB64(ct),
+    tag: bytesToB64(tag),
+  };
+}
+
+async function saveEncryptedVaultToGitHub(vaultObj) {
+  const url = `https://api.github.com/repos/${encodeURIComponent(state.owner)}/${APP_REPO}/contents/auth_vault.json`;
+  const curRes = await fetch(url, {
+    headers: { Authorization: `Bearer ${state.token}`, Accept: "application/vnd.github+json" },
+  });
+  let sha = null;
+  if (curRes.ok) {
+    const cur = await curRes.json();
+    sha = cur.sha;
+  }
+  const body = {
+    message: "Update encrypted password login vault",
+    content: b64EncodeUtf8(JSON.stringify(vaultObj, null, 2)),
+  };
+  if (sha) body.sha = sha;
+  const putRes = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!putRes.ok) {
+    const err = await putRes.json().catch(() => ({}));
+    throw new Error(err.message || `Failed updating password vault (${putRes.status})`);
+  }
+}
 
 const state = {
   owner: localStorage.getItem(STORAGE_OWNER_KEY) || "emamuthu",
@@ -1049,12 +1192,78 @@ document.addEventListener("DOMContentLoaded", () => {
   $("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("login-error").classList.add("hidden");
-    state.owner = $("gh-owner").value.trim() || "emamuthu";
-    state.token = $("login-password").value.trim();
-    localStorage.setItem(STORAGE_OWNER_KEY, state.owner);
-    localStorage.setItem(STORAGE_TOKEN_KEY, state.token);
-    await boot();
+    const btn = $("login-submit-btn");
+    const pwdInput = $("login-password").value.trim();
+    const rawTokInput = ($("gh-raw-token") && $("gh-raw-token").value.trim()) || "";
+    const ownerInput = ($("gh-owner") && $("gh-owner").value.trim()) || "emamuthu";
+
+    btn.disabled = true;
+    btn.textContent = "Unlocking...";
+    try {
+      let resolvedToken = "";
+      let resolvedOwner = ownerInput;
+
+      if (rawTokInput) {
+        resolvedToken = rawTokInput;
+      } else if (pwdInput.startsWith("github_pat_") || pwdInput.startsWith("ghp_")) {
+        resolvedToken = pwdInput;
+      } else {
+        // Decrypt ./auth_vault.json using the entered App Password
+        const vRes = await fetch(`./auth_vault.json?t=${Date.now()}`);
+        if (!vRes.ok) {
+          throw new Error("Password vault not found. Use Advanced option below to sign in with your GitHub Token.");
+        }
+        const vault = await vRes.json();
+        resolvedOwner = vault.owner || ownerInput;
+        resolvedToken = await decryptTokenVault(vault, pwdInput);
+      }
+
+      state.owner = resolvedOwner;
+      state.token = resolvedToken;
+      localStorage.setItem(STORAGE_OWNER_KEY, state.owner);
+      localStorage.setItem(STORAGE_TOKEN_KEY, state.token);
+      $("login-password").value = "";
+      if ($("gh-raw-token")) $("gh-raw-token").value = "";
+      await boot();
+    } catch (err) {
+      $("login-error").textContent = err.message;
+      $("login-error").classList.remove("hidden");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Unlock Expenses";
+    }
   });
+
+  if ($("toggle-advanced-auth")) {
+    $("toggle-advanced-auth").addEventListener("click", () => {
+      const box = $("advanced-token-fields");
+      box.classList.toggle("hidden");
+      $("login-password").required = box.classList.contains("hidden");
+    });
+  }
+
+  if ($("change-password-form")) {
+    $("change-password-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const newPwd = $("new-app-password").value.trim();
+      const statusEl = $("change-password-status");
+      if (newPwd.length < 4) {
+        showToast("Password should be at least 4 characters");
+        return;
+      }
+      statusEl.textContent = "Encrypting and saving new password to GitHub...";
+      try {
+        const vault = await encryptTokenVault(state.token, newPwd, state.owner);
+        await saveEncryptedVaultToGitHub(vault);
+        $("new-app-password").value = "";
+        statusEl.innerHTML = `<span style="color:#047857;font-weight:700;">App password updated! You can now use this password on all your devices.</span>`;
+        showToast("App password updated!");
+      } catch (err) {
+        statusEl.innerHTML = `<span style="color:#dc2626;font-weight:600;">Error: ${esc(err.message)}</span>`;
+        showToast(err.message);
+      }
+    });
+  }
 
   $("logout-btn").addEventListener("click", () => {
     localStorage.removeItem(STORAGE_TOKEN_KEY);

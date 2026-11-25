@@ -331,14 +331,24 @@ async function fetchDatabaseFromGitHub() {
     day_of_month: Number(t.day_of_month || 1),
     active: Number(t.active !== undefined ? (t.active ? 1 : 0) : 1),
   }));
+  const misc_expenses = (parsed.misc_expenses || []).map((m, idx) => ({
+    id: Number(m.id || idx + 1),
+    year: Number(m.year || new Date().getFullYear()),
+    item: String(m.item || "Misc"),
+    amount: Number(m.amount || 0),
+    notes: String(m.notes || ""),
+  }));
   const maxId = expenses.reduce((m, r) => Math.max(m, r.id), 0);
   const maxTid = templates.reduce((m, t) => Math.max(m, t.id), 0);
+  const maxMid = misc_expenses.reduce((m, x) => Math.max(m, x.id), 0);
 
   state.db = {
     version: 1,
     next_id: Math.max(Number(parsed.next_id || 0), maxId + 1),
     next_template_id: Math.max(Number(parsed.next_template_id || 0), maxTid + 1),
+    next_misc_id: Math.max(Number(parsed.next_misc_id || 0), maxMid + 1),
     expenses,
+    misc_expenses,
     recurring_templates: templates,
   };
   setSyncBadge("GitHub Synced ✓");
@@ -763,12 +773,18 @@ function loadTrendsView() {
   }
 
   const years = Object.values(matrix).sort((a, b) => a.year - b.year);
+  const miscByYear = {};
+  for (const m of state.db.misc_expenses || []) {
+    miscByYear[m.year] = (miscByYear[m.year] || 0) + Number(m.amount);
+  }
   for (const y of years) {
     const active = Object.values(y.months).filter((v) => v > 0).length || 1;
     y.avg_monthly = y.total / active;
+    y.extra = miscByYear[y.year] || 0;
   }
 
   renderYoYMatrix({ years, all_time_total: allTotal, all_time_count: allCount });
+  renderMiscExpensesSection();
   renderAnnualChart(years);
   loadYearBreakdown($("trends-year-select").value);
 }
@@ -791,6 +807,8 @@ function renderYoYMatrix(yoy) {
   }
   html += `<tr class="yoy-total-row"><td>12 Months</td>${years.map((y) => `<td>${fmtWhole(y.total)}</td>`).join("")}</tr>`;
   html += `<tr class="yoy-avg-row"><td>Monthly Avg</td>${years.map((y) => `<td>${fmtWhole(y.avg_monthly)}</td>`).join("")}</tr>`;
+  html += `<tr class="yoy-total-row" style="color:#b45309;background:#fffbeb;"><td>Extra / Misc</td>${years.map((y) => `<td>${y.extra > 0 ? fmtWhole(y.extra) : "—"}</td>`).join("")}</tr>`;
+  html += `<tr class="yoy-total-row" style="background:#ecfdf5;color:#065f46;"><td>12Mo + Extra</td>${years.map((y) => `<td>${fmtWhole(y.total + (y.extra || 0))}</td>`).join("")}</tr>`;
   html += `</tbody>`;
 
   const tbl = $("yoy-table");
@@ -800,6 +818,77 @@ function renderYoYMatrix(yoy) {
       state.curYear = Number(cell.dataset.year);
       state.curMonth = Number(cell.dataset.month);
       switchView("month");
+    });
+  });
+}
+
+function renderMiscExpensesSection() {
+  const list = state.db.misc_expenses || [];
+  const totalMisc = list.reduce((a, b) => a + Number(b.amount), 0);
+  if ($("misc-alltime-kpi")) {
+    $("misc-alltime-kpi").innerHTML = `
+      <strong>${fmtWhole(totalMisc)}</strong>
+      <span>${list.length} extra items across all years</span>
+    `;
+  }
+  if ($("misc-year") && !$("misc-year").value) {
+    $("misc-year").value = String(new Date().getFullYear());
+  }
+
+  const byYear = new Map();
+  for (const m of list) {
+    if (!byYear.has(m.year)) byYear.set(m.year, []);
+    byYear.get(m.year).push(m);
+  }
+  const sortedYears = [...byYear.keys()].sort((a, b) => b - a);
+  const grid = $("misc-years-grid");
+  if (!grid) return;
+
+  if (!sortedYears.length) {
+    grid.innerHTML = `<div class="empty-state">No yearly extra/misc expenses yet.</div>`;
+    return;
+  }
+
+  grid.innerHTML = sortedYears
+    .map((yr) => {
+      const items = byYear.get(yr);
+      const yrSum = items.reduce((a, b) => a + Number(b.amount), 0);
+      return `
+        <div style="border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--surface-alt);">
+          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #cbd5e1;padding-bottom:6px;margin-bottom:8px;">
+            <strong style="font-size:1rem;">${yr} Extra</strong>
+            <strong style="color:var(--emerald);font-size:1rem;">${fmtWhole(yrSum)}</strong>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;">
+            ${items
+              .map(
+                (it) => `
+                <div class="misc-item-row" data-mid="${it.id}" style="display:flex;justify-content:space-between;align-items:center;font-size:0.86rem;padding:5px 7px;background:#fff;border-radius:7px;border:1px solid var(--border);cursor:pointer;" title="Click to delete">
+                  <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">${esc(it.item)}</span>
+                  <strong>${fmtWhole(it.amount)}</strong>
+                </div>`
+              )
+              .join("")}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  grid.querySelectorAll(".misc-item-row").forEach((row) => {
+    row.addEventListener("click", async () => {
+      const mid = Number(row.dataset.mid);
+      const itemObj = (state.db.misc_expenses || []).find((x) => Number(x.id) === mid);
+      if (!itemObj) return;
+      if (!confirm(`Delete extra expense "${itemObj.item}" (${fmtMoney(itemObj.amount)}) from ${itemObj.year}?`)) return;
+      state.db.misc_expenses = state.db.misc_expenses.filter((x) => Number(x.id) !== mid);
+      loadTrendsView();
+      try {
+        await saveDatabaseToGitHub(`Delete extra expense ${itemObj.item}`);
+        showToast("Deleted extra expense & synced");
+      } catch (err) {
+        showToast(err.message);
+      }
     });
   });
 }
@@ -1316,6 +1405,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("trends-year-select").addEventListener("change", (e) => loadYearBreakdown(e.target.value));
   $("global-search-form").addEventListener("submit", handleGlobalSearch);
+
+  if ($("add-misc-form")) {
+    $("add-misc-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const year = parseInt($("misc-year").value, 10) || new Date().getFullYear();
+      const item = $("misc-item").value.trim();
+      const amount = Math.round((parseFloat($("misc-amount").value) || 0) * 100) / 100;
+      if (!item || !amount) return;
+      if (!state.db.misc_expenses) state.db.misc_expenses = [];
+      if (!state.db.next_misc_id) state.db.next_misc_id = state.db.misc_expenses.length + 1;
+      state.db.misc_expenses.push({
+        id: state.db.next_misc_id++,
+        year,
+        item,
+        amount,
+        notes: "",
+      });
+      $("misc-item").value = "";
+      $("misc-amount").value = "";
+      loadTrendsView();
+      try {
+        await saveDatabaseToGitHub(`Add ${year} extra expense: ${item} ($${amount})`);
+        showToast(`Added ${item} (${fmtWhole(amount)}) to ${year} Extra`);
+      } catch (err) {
+        showToast(err.message);
+      }
+    });
+  }
 
   $("edit-expense-form").addEventListener("submit", handleSaveEdit);
   $("delete-expense-btn").addEventListener("click", handleDeleteExpense);

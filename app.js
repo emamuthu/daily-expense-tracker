@@ -840,7 +840,7 @@ function renderMiscExpensesSection() {
     if (!byYear.has(m.year)) byYear.set(m.year, []);
     byYear.get(m.year).push(m);
   }
-  const sortedYears = [...byYear.keys()].sort((a, b) => b - a);
+  const sortedYears = [...byYear.keys()].sort((a, b) => a - b);
   const grid = $("misc-years-grid");
   if (!grid) return;
 
@@ -849,21 +849,33 @@ function renderMiscExpensesSection() {
     return;
   }
 
+  const YEAR_HEADER_STYLES = {
+    2016: "background:#334155;color:#fff;",
+    2021: "background:#0f766e;color:#fff;",
+    2022: "background:#ffff00;color:#0f172a;",
+    2023: "background:#ffc000;color:#0f172a;",
+    2024: "background:#2f5597;color:#fff;",
+    2025: "background:#2f5597;color:#92d050;",
+    2026: "background:#9e480e;color:#fff;",
+    2027: "background:#e2e8f0;color:#0f172a;",
+  };
+
   grid.innerHTML = sortedYears
     .map((yr) => {
       const items = byYear.get(yr);
       const yrSum = items.reduce((a, b) => a + Number(b.amount), 0);
+      const hdrStyle = YEAR_HEADER_STYLES[yr] || "background:#1e293b;color:#fff;";
       return `
-        <div style="border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--surface-alt);">
-          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #cbd5e1;padding-bottom:6px;margin-bottom:8px;">
-            <strong style="font-size:1rem;">${yr} Extra</strong>
-            <strong style="color:var(--emerald);font-size:1rem;">${fmtWhole(yrSum)}</strong>
+        <div style="border:1px solid #cbd5e1;border-radius:10px;overflow:hidden;background:#fff;display:flex;flex-direction:column;">
+          <div style="${hdrStyle}display:flex;justify-content:space-between;align-items:center;padding:8px 11px;font-weight:700;font-size:0.92rem;">
+            <span>${yr} Expense</span>
+            <span>${fmtWhole(yrSum)}</span>
           </div>
-          <div style="display:flex;flex-direction:column;gap:5px;">
+          <div style="display:flex;flex-direction:column;divide-y:1px solid #e2e8f0;flex:1;">
             ${items
               .map(
                 (it) => `
-                <div class="misc-item-row" data-mid="${it.id}" style="display:flex;justify-content:space-between;align-items:center;font-size:0.86rem;padding:5px 7px;background:#fff;border-radius:7px;border:1px solid var(--border);cursor:pointer;" title="Click to delete">
+                <div class="misc-item-row" data-mid="${it.id}" style="display:flex;justify-content:space-between;align-items:center;font-size:0.86rem;padding:6px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer;" title="Click to edit or delete">
                   <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;">${esc(it.item)}</span>
                   <strong>${fmtWhole(it.amount)}</strong>
                 </div>`
